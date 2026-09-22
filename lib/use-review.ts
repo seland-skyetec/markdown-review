@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { buildDocument, normaliseReviewed } from "./document";
 import type { Annotation, PublicReview, Retention } from "./review";
+import { rememberRecentReview } from "./recent";
 
 export type Session = {
   id: string;
@@ -45,12 +46,15 @@ export function useReview() {
         const data = await response.json() as PublicReview;
         let editToken: string | null = null;
         try { editToken = localStorage.getItem(`markdown-review:${id}:editToken`); } catch { /* Read-only when browser storage is unavailable. */ }
-        if (!controller.signal.aborted) adopt({
-          id: data.id, filename: data.filename, source: data.source, retention: data.retention,
-          annotations: data.annotations ?? [],
-          reviewed: data.source ? normaliseReviewed(buildDocument(data.source), data.reviewedBlockIds ?? []) : data.reviewedBlockIds ?? [],
-          editToken,
-        });
+        if (!controller.signal.aborted) {
+          adopt({
+            id: data.id, filename: data.filename, source: data.source, retention: data.retention,
+            annotations: data.annotations ?? [],
+            reviewed: data.source ? normaliseReviewed(buildDocument(data.source), data.reviewedBlockIds ?? []) : data.reviewedBlockIds ?? [],
+            editToken,
+          });
+          rememberRecentReview(data.id, data.filename);
+        }
       } catch (cause) {
         if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : "Kunne ikke åpne dokumentet.");
       } finally { if (!controller.signal.aborted) setLoading(false); }
@@ -118,6 +122,7 @@ export function useReview() {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Kunne ikke lagre dokumentet.");
       adopt({ id: data.id, filename, source, retention, annotations: [], reviewed: [], editToken: data.editToken });
+      rememberRecentReview(data.id, filename);
       try { localStorage.setItem(`markdown-review:${data.id}:editToken`, data.editToken); }
       catch { setError("Nettleseren kan ikke huske redigeringstilgangen. Behold denne fanen åpen."); }
       window.history.replaceState({}, "", `/?review=${data.id}`);
