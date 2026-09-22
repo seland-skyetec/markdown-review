@@ -15,10 +15,6 @@ type Block = {
 type LoadedReview = {
   id: string;
   filename: string;
-  title: string;
-  createdAt: string;
-  updatedAt: string;
-  sourceExpiresAt: string | null;
   retention: Retention;
   reviewedBlockIds: string[];
   annotations: Annotation[];
@@ -32,6 +28,22 @@ const retentionLabels: Record<Retention, string> = {
   "1m": "1 måned",
   never: "Aldri",
 };
+
+function stripInlineMarkdown(value: string): string {
+  return value
+    .replace(/^#{1,6}\s+/gm, "")
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/__([^_]+)__/g, "$1")
+    .replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, "$1")
+    .replace(/(?<!_)_([^_]+)_(?!_)/g, "$1")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/^>\s?/gm, "")
+    .replace(/^\s*[-*+]\s+/gm, "")
+    .replace(/^\s*\d+\.\s+/gm, "")
+    .trim();
+}
 
 function splitMarkdownBlocks(markdown: string): Block[] {
   const lines = markdown.replace(/\r\n?/g, "\n").split("\n");
@@ -71,30 +83,15 @@ function splitMarkdownBlocks(markdown: string): Block[] {
         : /^(\s*[-*+]\s+|\s*\d+\.\s+|\s*>\s+|\s*\|)/m.test(raw)
           ? "structured"
           : "prose";
+
     const titleSource = heading ? stripInlineMarkdown(heading) : plain;
     return {
       id: `b-${index + 1}`,
       raw,
-      title: titleSource.length > 72 ? `${titleSource.slice(0, 72)}…` : titleSource || `Blokk ${index + 1}`,
+      title: titleSource.length > 58 ? `${titleSource.slice(0, 58)}…` : titleSource || `Del ${index + 1}`,
       kind,
     };
   });
-}
-
-function stripInlineMarkdown(value: string): string {
-  return value
-    .replace(/^#{1,6}\s+/gm, "")
-    .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1")
-    .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
-    .replace(/\*\*([^*]+)\*\*/g, "$1")
-    .replace(/__([^_]+)__/g, "$1")
-    .replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, "$1")
-    .replace(/(?<!_)_([^_]+)_(?!_)/g, "$1")
-    .replace(/`([^`]+)`/g, "$1")
-    .replace(/^>\s?/gm, "")
-    .replace(/^\s*[-*+]\s+/gm, "")
-    .replace(/^\s*\d+\.\s+/gm, "")
-    .trim();
 }
 
 function sentences(text: string): string[] {
@@ -106,11 +103,6 @@ function sentences(text: string): string[] {
   } catch {
     return clean.match(/[^.!?]+(?:[.!?]+|$)/g)?.map((part) => part.trim()).filter(Boolean) ?? [clean];
   }
-}
-
-function formatDate(value: string | null): string {
-  if (!value) return "aldri";
-  return new Intl.DateTimeFormat("nb-NO", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
 }
 
 function downloadText(filename: string, content: string, type = "text/plain") {
@@ -126,14 +118,16 @@ export default function Home() {
   const [source, setSource] = useState("");
   const [filename, setFilename] = useState("document.md");
   const [retention, setRetention] = useState<Retention>("1w");
+  const [pasteMode, setPasteMode] = useState(false);
+
   const [reviewId, setReviewId] = useState<string | null>(null);
   const [editToken, setEditToken] = useState<string | null>(null);
-  const [sourceExpiresAt, setSourceExpiresAt] = useState<string | null>(null);
   const [annotations, setAnnotations] = useState<Annotation[]>([]);
   const [reviewed, setReviewed] = useState<string[]>([]);
   const [openBlockId, setOpenBlockId] = useState<string | null>(null);
   const [selectedQuote, setSelectedQuote] = useState<{ blockId: string; quote: string } | null>(null);
   const [comment, setComment] = useState("");
+  const [showErrata, setShowErrata] = useState(false);
   const [busy, setBusy] = useState(false);
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [error, setError] = useState<string | null>(null);
@@ -143,35 +137,38 @@ export default function Home() {
   const fileInput = useRef<HTMLInputElement>(null);
 
   const blocks = useMemo(() => splitMarkdownBlocks(source), [source]);
-  const openBlock = blocks.find((block) => block.id === openBlockId) ?? blocks[0] ?? null;
+  const openIndex = Math.max(0, blocks.findIndex((block) => block.id === openBlockId));
+  const openBlock = blocks[openIndex] ?? null;
   const reviewedSet = useMemo(() => new Set(reviewed), [reviewed]);
-  const progress = blocks.length ? Math.round((reviewed.length / blocks.length) * 100) : 0;
-  const agentUrl = reviewId && typeof window !== "undefined" ? `${window.location.origin}/api/reviews/${reviewId}` : "";
+  const agentUrl = reviewId && typeof window !== "undefined"
+    ? `${window.location.origin}/api/reviews/${reviewId}`
+    : "";
 
   const loadExisting = useCallback(async (id: string) => {
     setLoadingExisting(true);
     setError(null);
     try {
       const response = await fetch(`/api/reviews/${id}`, { cache: "no-store" });
-      if (!response.ok) throw new Error("Kunne ikke åpne review-lenken.");
+      if (!response.ok) throw new Error("Kunne ikke åpne reviewet.");
       const data = await response.json() as LoadedReview;
       setReviewId(data.id);
       setFilename(data.filename);
       setRetention(data.retention);
-      setSourceExpiresAt(data.sourceExpiresAt);
       setAnnotations(data.annotations ?? []);
       setReviewed(data.reviewedBlockIds ?? []);
       setSource(data.source ?? "");
+
       const token = localStorage.getItem(`markdown-review:${data.id}:editToken`);
       setEditToken(token);
       setReadOnly(!token);
+
       const parsed = data.source ? splitMarkdownBlocks(data.source) : [];
-      setOpenBlockId(parsed[0]?.id ?? null);
-      if (!data.sourceAvailable) {
-        setError("Kildedokumentet er utløpt og er ikke lenger tilgjengelig. Errata er beholdt.");
-      }
+      const firstPending = parsed.find((block) => !(data.reviewedBlockIds ?? []).includes(block.id));
+      setOpenBlockId(firstPending?.id ?? parsed[0]?.id ?? null);
+
+      if (!data.sourceAvailable) setError("Kilden er utløpt. Errata er beholdt.");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Kunne ikke laste review.");
+      setError(err instanceof Error ? err.message : "Kunne ikke laste reviewet.");
     } finally {
       setLoadingExisting(false);
     }
@@ -202,32 +199,22 @@ export default function Home() {
 
   useEffect(() => {
     if (!reviewId || !editToken || readOnly) return;
-    setSaveState("saving");
-    const timer = window.setTimeout(() => void saveNow(), 650);
+    const timer = window.setTimeout(() => void saveNow(), 500);
     return () => window.clearTimeout(timer);
   }, [annotations, reviewed, reviewId, editToken, readOnly, saveNow]);
 
   async function ingestFile(file: File) {
     if (!file.name.toLowerCase().endsWith(".md") && file.type !== "text/markdown" && file.type !== "text/plain") {
-      setError("Velg en Markdown-fil (.md).");
+      setError("Velg en .md-fil.");
       return;
     }
-    const text = await file.text();
-    setSource(text);
+    setSource(await file.text());
     setFilename(file.name || "document.md");
-    setReviewId(null);
-    setEditToken(null);
-    setAnnotations([]);
-    setReviewed([]);
-    setReadOnly(false);
     setError(null);
   }
 
   async function createReview() {
-    if (!source.trim()) {
-      setError("Legg inn et Markdown-dokument først.");
-      return;
-    }
+    if (!source.trim()) return;
     setBusy(true);
     setError(null);
     try {
@@ -237,12 +224,13 @@ export default function Home() {
         body: JSON.stringify({ source, filename, retention }),
       });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.error || "Kunne ikke opprette review.");
+      if (!response.ok) throw new Error(data.error || "Kunne ikke starte review.");
+
       setReviewId(data.id);
       setEditToken(data.editToken);
-      setSourceExpiresAt(data.sourceExpiresAt);
       localStorage.setItem(`markdown-review:${data.id}:editToken`, data.editToken);
       window.history.replaceState({}, "", `/?review=${data.id}`);
+
       const parsed = splitMarkdownBlocks(source);
       setOpenBlockId(parsed[0]?.id ?? null);
       setSaveState("saved");
@@ -255,9 +243,15 @@ export default function Home() {
 
   function toggleReviewed(blockId: string) {
     if (readOnly) return;
-    setReviewed((current) => current.includes(blockId)
+    const isDone = reviewedSet.has(blockId);
+    setReviewed((current) => isDone
       ? current.filter((id) => id !== blockId)
       : [...current, blockId]);
+
+    if (!isDone) {
+      const next = blocks[openIndex + 1];
+      if (next) window.setTimeout(() => setOpenBlockId(next.id), 160);
+    }
   }
 
   function addAnnotation() {
@@ -273,12 +267,12 @@ export default function Home() {
     setSelectedQuote(null);
   }
 
-  async function finishReview() {
-    const saved = await saveNow();
-    if (!saved || !agentUrl) return;
+  async function copyAgentLink() {
+    if (!agentUrl) return;
+    await saveNow();
     await navigator.clipboard.writeText(agentUrl);
     setCopied(true);
-    window.setTimeout(() => setCopied(false), 2400);
+    window.setTimeout(() => setCopied(false), 1800);
   }
 
   function resetApp() {
@@ -286,76 +280,86 @@ export default function Home() {
     setFilename("document.md");
     setReviewId(null);
     setEditToken(null);
-    setSourceExpiresAt(null);
     setAnnotations([]);
     setReviewed([]);
     setOpenBlockId(null);
     setSelectedQuote(null);
     setComment("");
-    setError(null);
+    setShowErrata(false);
     setReadOnly(false);
+    setError(null);
+    setPasteMode(false);
     window.history.replaceState({}, "", "/");
   }
 
   if (loadingExisting) {
-    return <main className="loading-screen"><div className="spinner" /><p>Åpner review…</p></main>;
+    return <main className="loading-screen"><div className="spinner" /></main>;
   }
 
   if (!reviewId) {
     return (
-      <main className="landing-shell">
-        <section className="intro-card">
-          <div className="brand-row"><span className="brand-mark">MR</span><span>Markdown Review</span></div>
-          <p className="eyebrow">Fokusert dokumentgjennomgang</p>
-          <h1>Les én del om gangen.<br />Kommenter akkurat der det skurrer.</h1>
-          <p className="lede">Last inn Markdown, gå gjennom dokumentet blokk for blokk og bygg strukturert errata som kan deles direkte med en agent.</p>
+      <main className="setup-shell">
+        <section className="setup-card">
+          <div className="setup-title">Markdown Review</div>
 
-          <div
-            className="dropzone"
-            onDragOver={(event) => event.preventDefault()}
-            onDrop={(event) => {
-              event.preventDefault();
-              const file = event.dataTransfer.files[0];
-              if (file) void ingestFile(file);
-            }}
-            onClick={() => fileInput.current?.click()}
-          >
-            <input ref={fileInput} hidden type="file" accept=".md,text/markdown,text/plain" onChange={(event) => {
-              const file = event.target.files?.[0];
-              if (file) void ingestFile(file);
-            }} />
-            <span className="drop-icon">↓</span>
-            <strong>{source ? filename : "Slipp Markdown-filen her"}</strong>
-            <span>{source ? `${blocks.length} deler oppdaget · klikk for å bytte fil` : "eller klikk for å velge .md"}</span>
-          </div>
+          {!pasteMode ? (
+            <button
+              className={`dropzone ${source ? "has-file" : ""}`}
+              onDragOver={(event) => event.preventDefault()}
+              onDrop={(event) => {
+                event.preventDefault();
+                const file = event.dataTransfer.files[0];
+                if (file) void ingestFile(file);
+              }}
+              onClick={() => fileInput.current?.click()}
+            >
+              <input
+                ref={fileInput}
+                hidden
+                type="file"
+                accept=".md,text/markdown,text/plain"
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  if (file) void ingestFile(file);
+                }}
+              />
+              <span className="drop-icon">＋</span>
+              <span>{source ? filename : "Velg Markdown"}</span>
+              {source && <small>{blocks.length} deler</small>}
+            </button>
+          ) : (
+            <textarea
+              className="source-input"
+              autoFocus
+              value={source}
+              onChange={(event) => {
+                setSource(event.target.value);
+                setFilename("pasted-document.md");
+              }}
+              placeholder="Lim inn Markdown…"
+            />
+          )}
 
-          <div className="or"><span>eller lim inn Markdown</span></div>
-          <textarea
-            className="source-input"
-            value={source}
-            onChange={(event) => {
-              setSource(event.target.value);
-              setFilename("pasted-document.md");
-            }}
-            placeholder="# Rapport\n\nLim inn dokumentet her…"
-          />
+          <button className="text-button mode-toggle" onClick={() => setPasteMode((value) => !value)}>
+            {pasteMode ? "Velg fil" : "Lim inn i stedet"}
+          </button>
 
-          <div className="start-row">
-            <label className="retention-control">
-              <span>Behold kildefilen</span>
-              <select value={retention} onChange={(event) => setRetention(event.target.value as Retention)}>
-                <option value="1d">1 dag</option>
-                <option value="1w">1 uke</option>
-                <option value="1m">1 måned</option>
-                <option value="never">Aldri</option>
-              </select>
-            </label>
+          <div className="setup-footer">
+            <select
+              aria-label="Lagringstid for original"
+              value={retention}
+              onChange={(event) => setRetention(event.target.value as Retention)}
+            >
+              {Object.entries(retentionLabels).map(([value, label]) => (
+                <option key={value} value={value}>Original: {label}</option>
+              ))}
+            </select>
             <button className="primary-button" disabled={!source.trim() || busy} onClick={() => void createReview()}>
-              {busy ? "Oppretter…" : "Start gjennomgang →"}
+              {busy ? "…" : "Start"}
             </button>
           </div>
-          {error && <p className="error-banner">{error}</p>}
-          <p className="privacy-note">Errata beholdes etter at kildedokumentet er slettet. Delingslenken fungerer som en capability-lenke.</p>
+
+          {error && <div className="inline-error">{error}</div>}
         </section>
       </main>
     );
@@ -364,127 +368,196 @@ export default function Home() {
   return (
     <main className="review-shell">
       <header className="topbar">
-        <div className="topbar-brand"><span className="brand-mark small">MR</span><div><strong>{filename}</strong><span>{readOnly ? "Visning" : saveState === "saving" ? "Lagrer…" : saveState === "error" ? "Lagringsfeil" : "Lagret"}</span></div></div>
+        <button className="file-title" onClick={resetApp} title="Nytt dokument">
+          {filename}
+        </button>
+
+        <div className="topbar-status">
+          <span>{reviewed.length}/{blocks.length}</span>
+          {saveState === "saving" && <span className="save-dot saving" title="Lagrer" />}
+          {saveState === "error" && <span className="save-dot error" title="Lagringsfeil" />}
+        </div>
+
         <div className="top-actions">
-          <button className="ghost-button" onClick={() => downloadText(`${reviewId}-errata.json`, JSON.stringify({ reviewId, annotations, reviewedBlockIds: reviewed }, null, 2), "application/json")}>Eksporter errata</button>
-          {source && <button className="ghost-button" onClick={() => downloadText(filename, source, "text/markdown")}>Last ned original</button>}
-          {!readOnly && <button className="primary-button compact" onClick={() => void finishReview()}>{copied ? "Agentlenke kopiert ✓" : "Fullfør · kopier agentlenke"}</button>}
+          {annotations.length > 0 && (
+            <button className={`toolbar-button ${showErrata ? "active" : ""}`} onClick={() => setShowErrata((value) => !value)}>
+              Errata {annotations.length}
+            </button>
+          )}
+          <button className="toolbar-button primary" onClick={() => void copyAgentLink()}>
+            {copied ? "Kopiert" : "Kopier lenke"}
+          </button>
         </div>
       </header>
 
-      {error && <div className="review-warning">{error}</div>}
+      {error && <div className="floating-error">{error}</div>}
 
-      <div className="review-grid">
-        <aside className="sidebar">
-          <div className="progress-panel">
-            <div className="progress-copy"><span>Fremdrift</span><strong>{reviewed.length}/{blocks.length}</strong></div>
-            <div className="progress-track"><div className="progress-fill" style={{ width: `${progress}%` }} /></div>
-            <small>{annotations.length} {annotations.length === 1 ? "kommentar" : "kommentarer"}</small>
-          </div>
-
-          <nav className="block-list" aria-label="Dokumentdeler">
+      <div className="workspace">
+        <aside className="section-rail">
+          <nav className="section-list" aria-label="Dokumentdeler">
             {blocks.map((block, index) => {
               const done = reviewedSet.has(block.id);
               const count = annotations.filter((annotation) => annotation.blockId === block.id).length;
               return (
-                <button key={block.id} className={`block-tab ${openBlock?.id === block.id ? "active" : ""} ${done ? "done" : ""}`} onClick={() => setOpenBlockId(block.id)}>
-                  <span className="block-index">{done ? "✓" : String(index + 1).padStart(2, "0")}</span>
-                  <span className="block-tab-copy"><strong>{block.title}</strong><small>{count ? `${count} kommentar${count === 1 ? "" : "er"}` : block.kind === "code" ? "Kode" : "Ikke gjennomgått"}</small></span>
+                <button
+                  key={block.id}
+                  className={`section-row ${openBlock?.id === block.id ? "active" : ""} ${done ? "done" : ""}`}
+                  onClick={() => {
+                    setOpenBlockId(block.id);
+                    setSelectedQuote(null);
+                  }}
+                  title={block.title}
+                >
+                  <span className="section-state">{done ? "✓" : index + 1}</span>
+                  <span className="section-title">{block.title}</span>
+                  {count > 0 && <span className="section-count">{count}</span>}
                 </button>
               );
             })}
           </nav>
-
-          <div className="retention-note">
-            <span>Kilde lagres</span>
-            <strong>{retentionLabels[retention]}</strong>
-            <small>{sourceExpiresAt ? `Til ${formatDate(sourceExpiresAt)}` : "Ingen automatisk sletting"}</small>
-          </div>
-          <button className="new-review" onClick={resetApp}>+ Nytt dokument</button>
         </aside>
 
-        <section className="reading-pane">
+        <section className="focus-pane">
           {openBlock ? (
-            <article className="reading-card">
-              <div className="reading-meta"><span>Del {blocks.findIndex((block) => block.id === openBlock.id) + 1} av {blocks.length}</span><span>{openBlock.kind === "prose" ? "Klikk en setning for å kommentere" : "Markdown-visning"}</span></div>
+            <article className="focus-card">
+              <div className="focus-meta">{openIndex + 1} / {blocks.length}</div>
 
               {openBlock.kind === "prose" || openBlock.kind === "heading" ? (
                 <div className={`sentence-view ${openBlock.kind === "heading" ? "heading-view" : ""}`}>
                   {sentences(stripInlineMarkdown(openBlock.raw)).map((sentence, index) => {
-                    const count = annotations.filter((annotation) => annotation.blockId === openBlock.id && annotation.quote === sentence).length;
+                    const count = annotations.filter((annotation) =>
+                      annotation.blockId === openBlock.id && annotation.quote === sentence
+                    ).length;
+                    const selected = selectedQuote?.blockId === openBlock.id && selectedQuote.quote === sentence;
+
                     return (
                       <button
-                        key={`${index}-${sentence.slice(0, 20)}`}
-                        className={`sentence ${count ? "annotated" : ""} ${selectedQuote?.blockId === openBlock.id && selectedQuote.quote === sentence ? "selected" : ""}`}
+                        key={`${index}-${sentence.slice(0, 18)}`}
+                        className={`sentence ${count ? "annotated" : ""} ${selected ? "selected" : ""}`}
                         onClick={() => !readOnly && setSelectedQuote({ blockId: openBlock.id, quote: sentence })}
                       >
-                        {sentence}{count > 0 && <sup>{count}</sup>}
+                        {sentence}
+                        {count > 0 && <sup>{count}</sup>}
                       </button>
                     );
                   })}
                 </div>
               ) : (
-                <div className="markdown-render"><ReactMarkdown remarkPlugins={[remarkGfm]}>{openBlock.raw}</ReactMarkdown></div>
-              )}
-
-              {!readOnly && openBlock.kind !== "code" && openBlock.kind !== "heading" && openBlock.kind !== "prose" && (
-                <button className="comment-block-button" onClick={() => setSelectedQuote({ blockId: openBlock.id, quote: stripInlineMarkdown(openBlock.raw) })}>Kommenter hele blokken</button>
-              )}
-
-              <div className="review-controls">
-                <label className={`review-check ${reviewedSet.has(openBlock.id) ? "checked" : ""}`}>
-                  <input type="checkbox" checked={reviewedSet.has(openBlock.id)} disabled={readOnly} onChange={() => toggleReviewed(openBlock.id)} />
-                  <span className="check-box">✓</span>
-                  <span>Gjennomgått</span>
-                </label>
-                <div className="nav-buttons">
-                  <button disabled={blocks.findIndex((block) => block.id === openBlock.id) <= 0} onClick={() => {
-                    const i = blocks.findIndex((block) => block.id === openBlock.id);
-                    setOpenBlockId(blocks[i - 1]?.id ?? openBlock.id);
-                  }}>← Forrige</button>
-                  <button disabled={blocks.findIndex((block) => block.id === openBlock.id) >= blocks.length - 1} onClick={() => {
-                    const i = blocks.findIndex((block) => block.id === openBlock.id);
-                    setOpenBlockId(blocks[i + 1]?.id ?? openBlock.id);
-                  }}>Neste →</button>
+                <div className="markdown-render">
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{openBlock.raw}</ReactMarkdown>
                 </div>
-              </div>
+              )}
+
+              {!readOnly && openBlock.kind === "structured" && (
+                <button
+                  className="block-comment"
+                  onClick={() => setSelectedQuote({ blockId: openBlock.id, quote: stripInlineMarkdown(openBlock.raw) })}
+                >
+                  Kommenter blokken
+                </button>
+              )}
+
+              {selectedQuote && !readOnly ? (
+                <div className="comment-composer">
+                  <div className="selected-quote">{selectedQuote.quote}</div>
+                  <textarea
+                    autoFocus
+                    value={comment}
+                    onChange={(event) => setComment(event.target.value)}
+                    placeholder="Kommentar…"
+                    onKeyDown={(event) => {
+                      if ((event.metaKey || event.ctrlKey) && event.key === "Enter") addAnnotation();
+                      if (event.key === "Escape") {
+                        setSelectedQuote(null);
+                        setComment("");
+                      }
+                    }}
+                  />
+                  <div className="composer-actions">
+                    <button className="text-button" onClick={() => { setSelectedQuote(null); setComment(""); }}>Avbryt</button>
+                    <button className="primary-button small" disabled={!comment.trim()} onClick={addAnnotation}>Lagre</button>
+                  </div>
+                </div>
+              ) : (
+                <div className="focus-actions">
+                  <button
+                    className="nav-button"
+                    disabled={openIndex === 0}
+                    onClick={() => setOpenBlockId(blocks[openIndex - 1]?.id ?? openBlock.id)}
+                    aria-label="Forrige"
+                  >
+                    ←
+                  </button>
+
+                  <label className={`review-toggle ${reviewedSet.has(openBlock.id) ? "checked" : ""}`}>
+                    <input
+                      type="checkbox"
+                      checked={reviewedSet.has(openBlock.id)}
+                      disabled={readOnly}
+                      onChange={() => toggleReviewed(openBlock.id)}
+                    />
+                    <span>{reviewedSet.has(openBlock.id) ? "✓ Gjennomgått" : "Gjennomgått"}</span>
+                  </label>
+
+                  <button
+                    className="nav-button"
+                    disabled={openIndex >= blocks.length - 1}
+                    onClick={() => setOpenBlockId(blocks[openIndex + 1]?.id ?? openBlock.id)}
+                    aria-label="Neste"
+                  >
+                    →
+                  </button>
+                </div>
+              )}
             </article>
           ) : (
-            <article className="reading-card empty-source"><h2>Kilden er ikke lenger tilgjengelig</h2><p>Errata under er fortsatt bevart og kan deles med agentlenken.</p></article>
+            <div className="empty-source">Kilden er utløpt.</div>
           )}
-
-          {selectedQuote && !readOnly && (
-            <section className="composer">
-              <div className="composer-quote"><span>Kommenterer</span><q>{selectedQuote.quote}</q></div>
-              <textarea autoFocus value={comment} onChange={(event) => setComment(event.target.value)} placeholder="Hva bør endres, undersøkes eller presiseres?" onKeyDown={(event) => {
-                if ((event.metaKey || event.ctrlKey) && event.key === "Enter") addAnnotation();
-              }} />
-              <div className="composer-actions"><button onClick={() => { setSelectedQuote(null); setComment(""); }}>Avbryt</button><button className="primary-button compact" disabled={!comment.trim()} onClick={addAnnotation}>Lagre kommentar</button></div>
-            </section>
-          )}
-
-          <section className="errata-panel">
-            <div className="section-heading"><div><span className="eyebrow">Errata</span><h2>Kommentarer fra gjennomgangen</h2></div><span className="count-pill">{annotations.length}</span></div>
-            {annotations.length === 0 ? (
-              <p className="empty-state">Ingen kommentarer ennå. Klikk på en setning i dokumentet for å legge til én.</p>
-            ) : (
-              <div className="annotation-list">
-                {annotations.map((annotation, index) => (
-                  <article className="annotation-card" key={annotation.id}>
-                    <div className="annotation-number">{String(index + 1).padStart(2, "0")}</div>
-                    <div><q>{annotation.quote}</q><p>{annotation.comment}</p><small>{formatDate(annotation.createdAt)}</small></div>
-                    {!readOnly && <button className="delete-comment" aria-label="Slett kommentar" onClick={() => setAnnotations((current) => current.filter((item) => item.id !== annotation.id))}>×</button>}
-                  </article>
-                ))}
-              </div>
-            )}
-          </section>
-
-          <section className="agent-panel">
-            <div><span className="eyebrow">Agent handoff</span><h2>Én lenke inneholder reviewet</h2><p>API-et returnerer original Markdown så lenge retention tillater det, pluss permanent errata og review-status.</p></div>
-            <div className="agent-link"><code>{agentUrl}</code><button onClick={async () => { await navigator.clipboard.writeText(agentUrl); setCopied(true); window.setTimeout(() => setCopied(false), 2400); }}>{copied ? "Kopiert" : "Kopier"}</button></div>
-          </section>
         </section>
+
+        {showErrata && (
+          <aside className="errata-drawer">
+            <div className="drawer-head">
+              <strong>Errata</strong>
+              <button className="icon-button" onClick={() => setShowErrata(false)} aria-label="Lukk">×</button>
+            </div>
+
+            <div className="annotation-list">
+              {annotations.map((annotation) => (
+                <article className="annotation-card" key={annotation.id}>
+                  <q>{annotation.quote}</q>
+                  <p>{annotation.comment}</p>
+                  {!readOnly && (
+                    <button
+                      className="delete-comment"
+                      onClick={() => setAnnotations((current) => current.filter((item) => item.id !== annotation.id))}
+                    >
+                      Slett
+                    </button>
+                  )}
+                </article>
+              ))}
+            </div>
+
+            <div className="drawer-actions">
+              <button
+                className="toolbar-button"
+                onClick={() => downloadText(
+                  `${reviewId}-errata.json`,
+                  JSON.stringify({ reviewId, annotations, reviewedBlockIds: reviewed }, null, 2),
+                  "application/json"
+                )}
+              >
+                Eksporter
+              </button>
+              {source && (
+                <button className="toolbar-button" onClick={() => downloadText(filename, source, "text/markdown")}>
+                  Original
+                </button>
+              )}
+            </div>
+          </aside>
+        )}
       </div>
     </main>
   );
