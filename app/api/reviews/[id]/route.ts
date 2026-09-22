@@ -28,13 +28,27 @@ function validEditToken(candidate: string | null, expectedHex: string): boolean 
   return actual.length === expected.length && timingSafeEqual(actual, expected);
 }
 
-export async function GET(_request: Request, context: { params: Promise<{ id: string }> }) {
+export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
   const { id } = await context.params;
   const record = await readRecord(id);
   if (!record) return Response.json({ error: "Review ikke funnet." }, { status: 404 });
 
-  let source: string | null = null;
   const expired = isExpired(record.sourceExpiresAt);
+  if (new URL(request.url).searchParams.get("meta") === "1") {
+    return Response.json({
+      id: record.id,
+      filename: record.filename,
+      title: record.title,
+      updatedAt: record.updatedAt,
+      sourceExpiresAt: record.sourceExpiresAt,
+      sourceAvailable: !expired,
+      reviewedCount: record.reviewedBlockIds.length,
+      annotationCount: record.annotations.length,
+      retention: record.retention,
+    }, { headers: { "Cache-Control": "no-store" } });
+  }
+
+  let source: string | null = null;
   if (!expired) {
     source = await readText(record.sourcePath);
   } else {
