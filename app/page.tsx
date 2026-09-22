@@ -7,6 +7,7 @@ import { buildDocument, reviewScope, reviewUnits, sectionForAnnotation } from "@
 import type { SentenceTarget } from "@/lib/sentences";
 import type { Annotation, Retention } from "@/lib/review";
 import { useReview } from "@/lib/use-review";
+import { forgetRecentReview, onRecentReviewsChanged, readRecentReviews, type RecentReviewRef } from "@/lib/recent";
 
 function downloadText(filename: string, text: string, type: string) {
   const url = URL.createObjectURL(new Blob([text], { type }));
@@ -14,6 +15,13 @@ function downloadText(filename: string, text: string, type: string) {
   link.href = url; link.download = filename; link.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
+type RecentSummary = RecentReviewRef & {
+  updatedAt: string;
+  sourceAvailable: boolean;
+  reviewedCount: number;
+  annotationCount: number;
+};
+
 function MenuIcon() {
   return <svg viewBox="0 0 20 20" width="18" height="18" fill="none" aria-hidden="true"><rect x="2.5" y="3.5" width="15" height="13" rx="2" stroke="currentColor" /><path d="M7 4v12" stroke="currentColor" /></svg>;
 }
@@ -34,6 +42,7 @@ export default function Home() {
   const [shareFallback, setShareFallback] = useState("");
   const [copying, setCopying] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
+  const [recentReviews, setRecentReviews] = useState<RecentSummary[]>([]);
   const model = useMemo(() => buildDocument(session?.source ?? source), [session?.source, source]);
   const reviewed = useMemo(() => new Set(session?.reviewed ?? []), [session?.reviewed]);
   const units = useMemo(() => reviewUnits(model), [model]);
@@ -64,6 +73,32 @@ export default function Home() {
     // Resume once when opening a document, not after each checkbox/save.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session?.id, model]);
+
+  useEffect(() => {
+    if (session) return;
+    let cancelled = false;
+    const loadRecent = async () => {
+      const refs = readRecentReviews();
+      const items = await Promise.all(refs.map(async (ref) => {
+        try {
+          const response = await fetch(`/api/reviews/${encodeURIComponent(ref.id)}?meta=1`, { cache: "no-store" });
+          if (response.status === 404) {
+            forgetRecentReview(ref.id);
+            return null;
+          }
+          if (!response.ok) return null;
+          const meta = await response.json() as Omit<RecentSummary, keyof RecentReviewRef>;
+          return { ...ref, ...meta } as RecentSummary;
+        } catch {
+          return null;
+        }
+      }));
+      if (!cancelled) setRecentReviews(items.filter((item): item is RecentSummary => item !== null));
+    };
+    void loadRecent();
+    const unsubscribe = onRecentReviewsChanged(() => void loadRecent());
+    return () => { cancelled = true; unsubscribe(); };
+  }, [session?.id]);
 
   const hasDrafts = Object.values(drafts).some((draft) => draft.text.trim());
   useEffect(() => {
@@ -159,6 +194,22 @@ export default function Home() {
         <button className="primary-button" disabled={!source.trim() || loading} onClick={() => void review.create(source, filename, retention)}>Start</button>
       </div>
       {error && <p className="inline-error" role="alert">{error}</p>}
+      {!!recentReviews.length && <section className="recent-reviews" aria-label="Siste dokumenter">
+        <h2>Siste dokumenter</h2>
+        <div className="recent-list">
+          {recentReviews.map((item) => <div className="recent-row" key={item.id}>
+            <button className="recent-open" onClick={() => { window.location.href = `/?review=${item.id}`; }}>
+              <span className="recent-name">{item.filename}</span>
+              <span className="recent-meta">
+                {item.sourceAvailable
+                  ? <>{item.reviewedCount} gjennomgått{item.annotationCount ? ` · ${item.annotationCount} kommentar${item.annotationCount === 1 ? "" : "er"}` : ""}</>
+                  : <>Kilde utløpt{item.annotationCount ? ` · ${item.annotationCount} kommentar${item.annotationCount === 1 ? "" : "er"}` : ""}</>}
+              </span>
+            </button>
+            <button className="recent-remove" aria-label={`Fjern ${item.filename} fra siste dokumenter`} title="Fjern fra listen" onClick={() => forgetRecentReview(item.id)}>×</button>
+          </div>)}
+        </div>
+      </section>}
     </section>
   </main>;
 
