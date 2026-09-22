@@ -1,8 +1,21 @@
 export type Retention = "1d" | "1w" | "1m" | "never";
 
+/** Offsets use JavaScript UTF-16 indices in the unchanged source / rendered block. */
+export type SentenceAnchor = {
+  blockStart: number;
+  blockEnd: number;
+  sentenceIndex: number;
+  textStart: number;
+  textEnd: number;
+  exact: string;
+  prefix: string;
+  suffix: string;
+};
 export type Annotation = {
   id: string;
   blockId: string;
+  sectionId?: string;
+  anchor?: SentenceAnchor;
   quote: string;
   comment: string;
   createdAt: string;
@@ -18,6 +31,7 @@ export type ReviewRecord = {
   sourcePath: string;
   sourceExpiresAt: string | null;
   retention: Retention;
+  /** v1 b-N ids are read compatibly; new saves use heading-based s-offset ids. */
   reviewedBlockIds: string[];
   annotations: Annotation[];
   editTokenHash: string;
@@ -33,7 +47,6 @@ export function expiryFor(retention: Retention, now = new Date()): string | null
   const ms = retention === "1d" ? 86_400_000 : retention === "1w" ? 604_800_000 : 2_592_000_000;
   return new Date(now.getTime() + ms).toISOString();
 }
-
 export function isExpired(expiresAt: string | null): boolean {
   return expiresAt !== null && Date.parse(expiresAt) <= Date.now();
 }

@@ -3,3 +3,6 @@ node_modules
 .env*
 .vercel
 .DS_Store
+test-results
+playwright-report
+*.tsbuildinfo
