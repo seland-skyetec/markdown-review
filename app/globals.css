@@ -47,6 +47,16 @@ button, a, summary { touch-action: manipulation; }
 .primary-button { background: var(--accent); color: white; border: 1px solid var(--accent); border-radius: 7px; font-size: 12px; font-weight: 600; padding: 9px 17px; }
 .primary-button:hover:not(:disabled) { background: #3061d9; }
 .inline-error { color: var(--danger); font-size: 13px; line-height: 1.6; }
+.recent-reviews { margin-top: 34px; padding-top: 18px; border-top: 1px solid var(--border-soft); }
+.recent-reviews h2 { margin: 0 0 8px; color: var(--muted); font-size: 11px; font-weight: 500; }
+.recent-list { display: grid; gap: 2px; }
+.recent-row { display: grid; grid-template-columns: minmax(0, 1fr) 30px; align-items: center; border-radius: 7px; }
+.recent-row:hover { background: var(--surface); }
+.recent-open { min-width: 0; display: grid; gap: 3px; border: 0; background: transparent; text-align: left; padding: 9px 8px; }
+.recent-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--body); font-size: 12px; }
+.recent-meta { color: var(--muted); font-size: 10px; }
+.recent-remove { width: 28px; height: 28px; border: 0; border-radius: 5px; background: transparent; color: #666; font-size: 16px; }
+.recent-remove:hover { background: var(--surface-hover); color: var(--muted); }
 .loading-screen { height: 100dvh; display: grid; place-items: center; }
 .spinner { width: 20px; height: 20px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
