@@ -1,0 +1,44 @@
+# Markdown Review
+
+A small, focused web app for paragraph-by-paragraph Markdown review.
+
+## What it does
+
+- Upload or paste a Markdown document.
+- Review one top-level Markdown block at a time.
+- Click prose sentences and attach comments.
+- Mark each block as reviewed; completed items turn green.
+- Persist the original document for 1 day, 1 week (default), 1 month, or indefinitely.
+- Keep structured errata after the original expires.
+- Hand an agent one JSON URL containing the source (while retained), annotations, and review status.
+- Export the original Markdown and errata JSON locally.
+
+## Storage model
+
+Vercel Private Blob is used as a deliberately simple v1 datastore:
+
+- `sources/<review-id>.md` — original Markdown, subject to retention.
+- `reviews/<review-id>.json` — durable review metadata and errata.
+
+The review id is a random 128-bit capability identifier. Editing additionally requires a separate random edit token stored only in the creator's browser. Shared/agent links are read-only.
+
+A daily Vercel Cron calls `/api/cleanup` and deletes source blobs whose retention has expired. Reads also enforce expiry and attempt lazy deletion, so expired source content is never returned even if cleanup has not yet run.
+
+## Vercel setup
+
+1. Import this GitHub repository as a Vercel project.
+2. Add a **Private Vercel Blob** store to the project. The Blob integration injects the credentials used by `@vercel/blob`.
+3. Optional but recommended: add `CRON_SECRET` as a project environment variable. Vercel Cron will send it as `Authorization: Bearer <CRON_SECRET>`.
+4. Deploy.
+
+The app intentionally has no user accounts or database in v1. Treat review URLs as capability links and do not publish them.
+
+## Local development
+
+```bash
+npm install
+vercel env pull .env.local
+npm run dev
+```
+
+A linked Vercel Blob store is required for persistent review creation.
