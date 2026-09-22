@@ -2,8 +2,6 @@
 
 A small, focused web app for paragraph-by-paragraph Markdown review.
 
-[Deploy to Vercel with Private Blob](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fseland-skyetec%2Fmarkdown-review&project-name=markdown-review&stores=%5B%7B%22type%22%3A%22blob%22%2C%22access%22%3A%22private%22%7D%5D)
-
 ## What it does
 
 - Upload or paste a Markdown document.
@@ -28,9 +26,10 @@ A daily Vercel Cron calls `/api/cleanup` and deletes source blobs whose retentio
 
 ## Vercel setup
 
-The deploy link above imports the repository and requests a **Private Vercel Blob** store in the same flow.
-
-Optional but recommended after import: add `CRON_SECRET` as a project environment variable. Vercel Cron will send it as `Authorization: Bearer <CRON_SECRET>`.
+1. In Vercel, choose **Add New → Project** and import the existing GitHub repository `seland-skyetec/markdown-review`.
+2. Add a **Private Vercel Blob** store to the project.
+3. Optional but recommended: add `CRON_SECRET` as a project environment variable. Vercel Cron will send it as `Authorization: Bearer <CRON_SECRET>`.
+4. Deploy.
 
 The app intentionally has no user accounts or database in v1. Treat review URLs as capability links and do not publish them.
 
