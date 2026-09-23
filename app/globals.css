@@ -63,7 +63,7 @@ button, a, summary { touch-action: manipulation; }
 
 /* Only the selected chapter is mounted in the reading surface. */
 .review-shell { height: 100dvh; display: flex; flex-direction: column; overflow: hidden; }
-.topbar { flex-shrink: 0; min-height: var(--topbar); padding: 0 18px; display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: 20px; align-items: center; border-bottom: 1px solid var(--border-soft); background: var(--canvas); z-index: 30; }
+.topbar { flex-shrink: 0; min-height: calc(var(--topbar) + env(safe-area-inset-top)); padding: env(safe-area-inset-top) max(18px, env(safe-area-inset-right)) 0 max(18px, env(safe-area-inset-left)); display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: 20px; align-items: center; border-bottom: 1px solid var(--border-soft); background: var(--canvas); z-index: 30; }
 .topbar-document { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .file-title { min-width: 0; color: #b5b5bd; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; overflow: hidden; }
 .read-only-label { flex-shrink: 0; color: var(--muted); font-size: 11px; }
@@ -164,7 +164,7 @@ button, a, summary { touch-action: manipulation; }
 .annotation-card p { margin: 9px 0; font-size: 14px; color: var(--body); line-height: 1.7; white-space: pre-wrap; }
 .annotation-actions { display: flex; gap: 16px; }
 .danger-hover:hover { color: var(--danger); }
-.panel-footer { padding: 12px; border-top: 1px solid var(--border); }
+.panel-footer { padding: 12px 12px max(12px, env(safe-area-inset-bottom)); border-top: 1px solid var(--border); }
 @media (min-width: 1360px) {
   .workspace.has-panel { grid-template-columns: 260px minmax(0, 1fr) 340px; }
   .review-panel { position: static; width: auto; box-shadow: none; }
@@ -177,7 +177,7 @@ button, a, summary { touch-action: manipulation; }
 }
 @media (max-width: 720px) {
   :root { --topbar: 54px; }
-  .topbar { padding: 0 8px; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; }
+  .topbar { padding: env(safe-area-inset-top) max(8px, env(safe-area-inset-right)) 0 max(8px, env(safe-area-inset-left)); grid-template-columns: minmax(0, 1fr) auto; gap: 6px; }
   .topbar-document { gap: 6px; }
   .file-title { font-size: 11px; }
   .topbar-status { display: none; }
