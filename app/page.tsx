@@ -36,6 +36,8 @@ export default function Home() {
   const [activeId, setActiveId] = useState("");
   const [selected, setSelected] = useState<SentenceTarget | null>(null);
   const [drafts, setDrafts] = useState<Record<string, { target: SentenceTarget; text: string }>>({});
+  const [editingAnnotationId, setEditingAnnotationId] = useState<string | null>(null);
+  const [annotationDrafts, setAnnotationDrafts] = useState<Record<string, string>>({});
   const [showErrata, setShowErrata] = useState(false);
   const [outlineOpen, setOutlineOpen] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -102,7 +104,7 @@ export default function Home() {
     return () => { cancelled = true; unsubscribe(); };
   }, [session?.id]);
 
-  const hasDrafts = Object.values(drafts).some((draft) => draft.text.trim());
+  const hasDrafts = Object.values(drafts).some((draft) => draft.text.trim()) || Object.entries(annotationDrafts).some(([id, text]) => comments.find((annotation) => annotation.id === id)?.comment !== text);
   useEffect(() => {
     const leave = (event: BeforeUnloadEvent) => { if (hasDrafts) { event.preventDefault(); event.returnValue = ""; } };
     window.addEventListener("beforeunload", leave);
@@ -142,6 +144,24 @@ export default function Home() {
     setSelected(target);
     setShowErrata(false);
   }
+  function beginEditAnnotation(annotation: Annotation) {
+    setEditingAnnotationId(annotation.id);
+    setAnnotationDrafts((value) => value[annotation.id] === undefined ? { ...value, [annotation.id]: annotation.comment } : value);
+  }
+  function cancelEditAnnotation(id: string) {
+    setEditingAnnotationId(null);
+    setAnnotationDrafts((value) => { const next = { ...value }; delete next[id]; return next; });
+  }
+  function saveEditedAnnotation(id: string) {
+    if (readOnly) return;
+    const text = (annotationDrafts[id] ?? "").trim();
+    if (!text) return;
+    review.update((value) => ({
+      ...value,
+      annotations: value.annotations.map((annotation) => annotation.id === id ? { ...annotation, comment: text } : annotation),
+    }));
+    cancelEditAnnotation(id);
+  }
   function clearDraft(id: string) {
     setDrafts((value) => { const next = { ...value }; delete next[id]; return next; });
   }
@@ -153,10 +173,16 @@ export default function Home() {
     setSelected(null);
   }
   function deleteAnnotation(id: string) {
+    if (editingAnnotationId === id) cancelEditAnnotation(id);
     review.update((value) => ({ ...value, annotations: value.annotations.filter((annotation) => annotation.id !== id) }));
   }
   async function copyAgentLink() {
     if (!session || copying) return;
+    const editedDraft = Object.entries(annotationDrafts).find(([id, text]) => comments.find((annotation) => annotation.id === id)?.comment !== text);
+    if (editedDraft) {
+      review.setError("Lagre eller forkast den redigerte kommentaren før du deler.");
+      return;
+    }
     const draft = Object.values(drafts).find((value) => value.text.trim());
     if (draft) {
       navigate(draft.target.sectionId);
@@ -175,7 +201,7 @@ export default function Home() {
   async function resetApp() {
     if (hasDrafts && !window.confirm("Forkaste ulagrede kommentarer og åpne et nytt dokument?")) return;
     if (!await review.reset()) return;
-    setSource(""); setFilename("document.md"); setActiveId(""); setSelected(null); setDrafts({}); setShowErrata(false); setShareFallback(""); setPasteMode(false);
+    setSource(""); setFilename("document.md"); setActiveId(""); setSelected(null); setDrafts({}); setEditingAnnotationId(null); setAnnotationDrafts({}); setShowErrata(false); setShareFallback(""); setPasteMode(false);
   }
   function exportErrata() {
     if (!session) return;
@@ -240,13 +266,35 @@ export default function Home() {
 
   function annotationCard(annotation: Annotation) {
     const section = sectionForAnnotation(model, annotation);
+    const editing = editingAnnotationId === annotation.id;
     return <article className="annotation-card" key={annotation.id}>
       {!selected && <q>{annotation.quote}</q>}
-      <p>{annotation.comment}</p>
-      <div className="annotation-actions">
-        {!selected && section && <button className="text-button" onClick={() => { navigate(section.id); setShowErrata(false); }}>Vis i tekst</button>}
-        {!readOnly && <button className="text-button danger-hover" aria-label={`Slett kommentar: ${annotation.comment}`} onClick={() => deleteAnnotation(annotation.id)}>Slett</button>}
-      </div>
+      {editing ? <form className="comment-composer" onSubmit={(event) => { event.preventDefault(); saveEditedAnnotation(annotation.id); }}>
+        <label className="sr-only" htmlFor={`edit-comment-${annotation.id}`}>Rediger kommentar</label>
+        <textarea
+          id={`edit-comment-${annotation.id}`}
+          autoFocus
+          value={annotationDrafts[annotation.id] ?? annotation.comment}
+          onChange={(event) => setAnnotationDrafts((value) => ({ ...value, [annotation.id]: event.target.value }))}
+          onKeyDown={(event) => {
+            if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+              event.preventDefault();
+              saveEditedAnnotation(annotation.id);
+            }
+          }}
+        />
+        <div className="composer-actions">
+          <button className="text-button" type="button" onClick={() => cancelEditAnnotation(annotation.id)}>Avbryt</button>
+          <button className="primary-button" type="submit" disabled={!(annotationDrafts[annotation.id] ?? annotation.comment).trim()}>Lagre endring</button>
+        </div>
+      </form> : <>
+        <p>{annotation.comment}</p>
+        <div className="annotation-actions">
+          {!selected && section && <button className="text-button" onClick={() => { navigate(section.id); setShowErrata(false); }}>Vis i tekst</button>}
+          {!readOnly && <button className="text-button" aria-label={`Rediger kommentar: ${annotation.comment}`} onClick={() => beginEditAnnotation(annotation)}>Rediger</button>}
+          {!readOnly && <button className="text-button danger-hover" aria-label={`Slett kommentar: ${annotation.comment}`} onClick={() => deleteAnnotation(annotation.id)}>Slett</button>}
+        </div>
+      </>}
     </article>;
   }
 

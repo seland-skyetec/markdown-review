@@ -130,6 +130,33 @@ test("identical sentences are independent and drafts survive navigation", async 
   await expect.poll(() => state.annotations.length).toBe(1);
 });
 
+test("existing sentence comments can be edited without creating duplicates", async ({ page }) => {
+  const { state } = await setup(page);
+  const sentence = page.getByRole("button", { name: "Kommenter: Dette er første setning med en lenke.", exact: true });
+
+  await sentence.click();
+  await page.getByRole("textbox", { name: "Kommentar til valgt setning" }).fill("Første versjon.");
+  await page.getByRole("button", { name: "Lagre", exact: true }).click();
+  await expect.poll(() => state.annotations.length).toBe(1);
+  const originalId = state.annotations[0].id;
+
+  await sentence.click();
+  await page.getByRole("button", { name: "Rediger kommentar: Første versjon.", exact: true }).click();
+  const editor = page.getByRole("textbox", { name: "Rediger kommentar", exact: true });
+  await expect(editor).toHaveValue("Første versjon.");
+  await editor.fill("Oppdatert kommentar.");
+  await page.getByRole("button", { name: "Lagre endring", exact: true }).click();
+
+  await expect(page.getByText("Oppdatert kommentar.", { exact: true })).toBeVisible();
+  await expect.poll(() => state.annotations[0]?.comment).toBe("Oppdatert kommentar.");
+  expect(state.annotations).toHaveLength(1);
+  expect(state.annotations[0].id).toBe(originalId);
+
+  await page.reload();
+  await sentence.click();
+  await expect(page.getByText("Oppdatert kommentar.", { exact: true })).toBeVisible();
+});
+
 test("legacy comments remain visible and read-only links cannot write", async ({ page }) => {
   const { writes } = await setup(page, true, true);
   await expect(page.locator(".sentence.annotated")).toHaveCount(1);
