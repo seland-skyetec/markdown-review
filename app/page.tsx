@@ -42,6 +42,8 @@ export default function Home() {
   const [shareFallback, setShareFallback] = useState("");
   const [copying, setCopying] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
+  const dragDepth = useRef(0);
+  const [dragActive, setDragActive] = useState(false);
   const [recentReviews, setRecentReviews] = useState<RecentSummary[]>([]);
   const model = useMemo(() => buildDocument(session?.source ?? source), [session?.source, source]);
   const reviewed = useMemo(() => new Set(session?.reviewed ?? []), [session?.reviewed]);
@@ -182,12 +184,35 @@ export default function Home() {
 
   if (loading && !session) return <main className="loading-screen" aria-label="Åpner dokument" role="status"><span className="spinner" /></main>;
 
-  if (!session) return <main className="setup-shell">
+  if (!session) return <main
+    className={`setup-shell ${dragActive ? "is-dragging" : ""}`}
+    onDragEnter={(event) => {
+      event.preventDefault();
+      dragDepth.current += 1;
+      setDragActive(true);
+    }}
+    onDragOver={(event) => {
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "copy";
+    }}
+    onDragLeave={(event) => {
+      event.preventDefault();
+      dragDepth.current = Math.max(0, dragDepth.current - 1);
+      if (dragDepth.current === 0) setDragActive(false);
+    }}
+    onDrop={(event) => {
+      event.preventDefault();
+      dragDepth.current = 0;
+      setDragActive(false);
+      const file = event.dataTransfer.files[0];
+      if (file) void ingestFile(file);
+    }}
+  >
     <section className="setup-card">
-      <h1 className="setup-title">Markdown Review</h1>
+      <h1 className="setup-title">Markdown-review</h1>
       <input ref={fileInput} hidden type="file" accept=".md,.markdown,.txt,text/markdown" onChange={(event) => { const file = event.target.files?.[0]; if (file) void ingestFile(file); event.target.value = ""; }} />
       {pasteMode ? <textarea className="source-input" aria-label="Markdown" autoFocus value={source} onChange={(event) => { setSource(event.target.value); setFilename("document.md"); }} placeholder="Lim inn Markdown…" />
-        : <button type="button" className={`dropzone ${source ? "has-file" : ""}`} onClick={() => fileInput.current?.click()} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); const file = event.dataTransfer.files[0]; if (file) void ingestFile(file); }}><span className="drop-icon" aria-hidden="true">＋</span><span>{source ? filename : "Velg Markdown"}</span>{source && <small>{model.groups.length} seksjoner</small>}</button>}
+        : <button type="button" className={`dropzone ${source ? "has-file" : ""}`} onClick={() => fileInput.current?.click()}><span className="drop-icon" aria-hidden="true">＋</span><span>{source ? filename : "Velg Markdown"}</span>{source && <small>{model.groups.length} seksjoner</small>}</button>}
       <button className="text-button mode-toggle" onClick={() => setPasteMode((value) => !value)}>{pasteMode ? "Velg fil" : "Lim inn i stedet"}</button>
       <div className="setup-footer">
         <select aria-label="Lagringstid for original" value={retention} onChange={(event) => setRetention(event.target.value as Retention)} title="Lagringstid for originalen. Errata beholdes."><option value="1d">Original: 1 dag</option><option value="1w">Original: 1 uke</option><option value="1m">Original: 1 måned</option><option value="never">Original: aldri slett</option></select>
